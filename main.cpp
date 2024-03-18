@@ -60,10 +60,27 @@ struct Boat {
 
 int money, boat_capacity, id;
 int direction[4][2] = {{0,  1},
-					   {1,  0},
 					   {0,  -1},
-					   {-1, 0}};
+					   {-1, 0},
+					   {1,  0}};
 char ch[N][N];
+
+class RandomManager {
+public:
+	RandomManager() :
+			rng(std::random_device{}()), dist(0.0, 1.0) {}
+
+	/**0到1之间的浮点数*/
+	double get_random() {
+		return dist(rng);
+	}
+
+private:
+	mt19937 rng;
+	uniform_real_distribution<double> dist;
+};
+
+RandomManager *randomManager;
 
 class MapManager {
 	struct DistanceMap {
@@ -121,7 +138,7 @@ public:
 	int find_available_berth() {
 		for (auto &i: available_berth) {
 			if (!i->is_occupied) {
-				i->is_occupied=true;
+				i->is_occupied = true;
 				return i->id;
 			}
 		}
@@ -171,7 +188,6 @@ private:
 
 	DistanceMap *distance_data[berth_num + 10];
 
-
 };
 
 MapManager *mapManager;
@@ -179,7 +195,7 @@ MapManager *mapManager;
 class BoatManager {
 public:
 
-	void init_boat() {
+	static void init_boat() {
 		for (auto &i: boat) {
 			if (mapManager->is_in_available_berth(i.pos))i.assigned_berth = i.pos;
 		}
@@ -190,7 +206,7 @@ public:
 		}
 	}
 
-	void handle_boat_event() {
+	static void handle_boat_event() {
 		for (auto &i: boat) {
 			if (i.status == 0)continue;
 			if (i.status == 1 && i.num == boat_capacity) {
@@ -204,6 +220,79 @@ public:
 };
 
 BoatManager *boatManager;
+
+class RobotManager {
+	struct Node {
+		int x, y; // 节点坐标
+		int g, h; // 实际代价和启发式代价
+		int next; // 方向,0→	1← 2↑ 3↓
+		Node *parent;//父节点
+
+		Node(int x, int y, int g, int h, int next, Node *parent) :
+				x(x), y(y), g(g), h(h), next(next), parent(parent) {}
+	};
+
+public:
+
+	void aStar(int startX, int startY, int targetX, int targetY) {
+		bool visited[n + 2][n + 2];
+		stack<int> path;
+		memset(visited, false, sizeof(visited));
+		priority_queue<Node *, vector<Node *>, decltype(&comp_node)> boundary;
+		boundary.push(new Node(startX, startY, 0, manhattanDistance(startX, startY, targetX, targetY), -1, nullptr));
+		while (!boundary.empty()) {
+			Node *curr_node = boundary.top();
+			boundary.pop();
+
+			if (curr_node->x == targetX && curr_node->y == targetY) {
+				// 找到目标位置，回溯路径
+				while (curr_node != nullptr) {
+					path.push(opposite_direction(curr_node->next));
+					curr_node = curr_node->parent;
+				}
+				break;
+			}
+
+			visited[curr_node->x][curr_node->y] = true;
+
+			// 扩展相邻节点
+			for (int i = 0; i < 4; i++) {
+				int new_x = curr_node->x + direction[i][0];
+				int new_y = curr_node->y + direction[i][1];
+
+				if (!visited[new_x][new_y] && ch[new_x][new_y] != '#' && ch[new_x][new_y] && new_x > 0 &&
+					new_x <= 200 &&
+					new_y > 0 && new_y <= 200) {
+					int new_g = curr_node->g + 1; // 每次移动代价为1
+					int new_h = manhattanDistance(new_x, new_y, targetX, targetY);
+					Node *newNode = new Node(new_x, new_y, new_g, new_h, i, curr_node);
+					boundary.push(newNode);
+				}
+			}
+
+		}
+	}
+
+
+private:
+	static int manhattanDistance(int x1, int y1, int x2, int y2) {
+		return abs(x1 - x2) + abs(y1 - y2);
+	}
+
+	static bool comp_node(Node *a, Node *b) {
+		int f1 = a->h + a->g;
+		int f2 = b->h + b->g;
+		if (f1 == f2)return randomManager->get_random() < 0.5;//引入随机性，避免每次生成相同的路线，降低撞车概率
+		return f1 < f2;
+	};
+
+	static int opposite_direction(int d) {
+		if (d % 2 == 0)return d + 1;
+		else return d - 1;
+	}
+};
+
+RobotManager *robotManager;
 
 void Init() {
 	auto start = chrono::system_clock::now();
@@ -228,8 +317,10 @@ void Init() {
 	char okk[50];
 	scanf("%s", okk);
 	assert(okk[0] == 'O' && okk[1] == 'K');
+	randomManager = new RandomManager();
 	mapManager = new MapManager();
 	boatManager = new BoatManager();
+	robotManager = new RobotManager();
 	for (int i = 0; i < 5; ++i) {
 		boat[i].id = i;
 	}
