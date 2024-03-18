@@ -146,6 +146,8 @@ public:
 	}
 
 	Berth *available_berth[boat_num];
+	DistanceMap *distance_data[berth_num + 10];
+
 private:
 
 	void bfs_minimal_distance(uint8_t start_x, uint8_t start_y, DistanceMap *distanceMap) {
@@ -186,7 +188,6 @@ private:
 		os.close();
 	}
 
-	DistanceMap *distance_data[berth_num + 10];
 
 };
 
@@ -271,6 +272,22 @@ public:
 			}
 
 		}
+	}
+
+	void go_to_berth(int robot_id, int berth_id) {
+		int min = INT_MAX;
+		int next_move = -1;
+		for (int i = 0; i < 4; ++i) {
+			int next_x = robot[robot_id].x + direction[i][0];
+			int next_y = robot[robot_id].y + direction[i][1];
+			int val = mapManager->distance_data[berth_id]->data[next_x][next_y];
+			if (val < min) {
+				min = val;
+				next_move = i;
+			} else if (val == min && randomManager->get_random() > 0.5)
+				next_move = i;
+		}
+		MOVE(robot_id, next_move);
 	}
 
 
