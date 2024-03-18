@@ -1,5 +1,12 @@
 #include <bits/stdc++.h>
 
+#define MOVE(id, dir) (printf("move %d %d\n",id,dir))
+#define GET(id) (printf("get %d\n",id))
+#define PULL(id) (printf("pull %d\n",id))
+#define SHIP(s_id, b_id)(printf("ship %d %d\n",s_id,b_id))
+#define GO(id) (printf("go %d\n",id))
+
+
 using namespace std;
 
 const int n = 200;
@@ -28,9 +35,11 @@ struct Berth // 泊位,地图从1开始，所以注意x和y要+1
 	int y;
 	int transport_time;
 	int loading_speed;
+	bool is_occupied;
 
 	Berth() {
 		x = -1;
+		is_occupied = false;
 	}
 
 	Berth(int x, int y, int transport_time, int loading_speed) {
@@ -38,12 +47,16 @@ struct Berth // 泊位,地图从1开始，所以注意x和y要+1
 		this->y = y;
 		this->transport_time = transport_time;
 		this->loading_speed = loading_speed;
+		this->is_occupied = false;
 	}
 } berth[berth_num + 10];
 
 struct Boat {
-	int num, pos, status;
-} boat[10];
+	int num, id, pos, status, assigned_berth;
+
+	Boat() :
+			num(0), id(0), pos(0), status(0), assigned_berth(-1) {};
+} boat[boat_num];
 
 int money, boat_capacity, id;
 int direction[4][2] = {{0,  1},
@@ -95,7 +108,26 @@ public:
 		}
 	}
 
-	Berth *available_berth[5];
+	bool is_in_available_berth(int boat_pos) {
+		for (auto &i: available_berth) {
+			if (i->id == boat_pos) {
+				i->is_occupied = true;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	int find_available_berth() {
+		for (auto &i: available_berth) {
+			if (!i->is_occupied) {
+				return i->id;
+			}
+		}
+		return -2;
+	}
+
+	Berth *available_berth[boat_num];
 private:
 
 	void bfs_minimal_distance(uint8_t start_x, uint8_t start_y, DistanceMap *distanceMap) {
@@ -143,6 +175,23 @@ private:
 
 MapManager *mapManager;
 
+class BoatManager {
+public:
+
+	void init_boat() {
+		for (auto &i: boat) {
+			if (mapManager->is_in_available_berth(i.pos))i.assigned_berth = i.pos;
+		}
+		for (auto &i: boat) {
+			if (i.assigned_berth == -1)i.assigned_berth = mapManager->find_available_berth();
+			assert(i.assigned_berth != -2);
+			SHIP(i.id, i.assigned_berth);
+		}
+	}
+
+};
+
+
 void Init() {
 	auto start = chrono::system_clock::now();
 	for (int i = 1; i <= n; i++)
@@ -166,6 +215,9 @@ void Init() {
 	scanf("%s", okk);
 	assert(okk[0] == 'O' && okk[1] == 'K');
 	mapManager = new MapManager();
+	for (int i = 0; i < 5; ++i) {
+		boat[i].id = i;
+	}
 	auto end = chrono::system_clock::now();
 	std::chrono::duration<double> elapsed_time = end - start;
 	std::cerr << "init time = " << elapsed_time.count() << endl;
@@ -185,8 +237,9 @@ int Input() {
 		int sts;
 		scanf("%d%d%d%d", &robot[i].goods, &robot[i].x, &robot[i].y, &sts);
 	}
-	for (int i = 0; i < boat_num; i++)
+	for (int i = 0; i < boat_num; i++) {
 		scanf("%d%d\n", &boat[i].status, &boat[i].pos);
+	}
 	char okk[50];
 	scanf("%s", okk);
 	assert(okk[0] == 'O' && okk[1] == 'K');
