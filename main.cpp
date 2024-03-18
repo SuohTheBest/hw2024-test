@@ -64,6 +64,8 @@ class MapManager {
 
 public:
 	MapManager() {
+		vector<std::pair<uint32_t, int>> berth_distance_total;
+
 		for (auto &t: berth) {
 			if (t.x == -1)continue;
 			DistanceMap *temp = new DistanceMap();
@@ -75,12 +77,25 @@ public:
 					bfs_minimal_distance(curr_x, curr_y, temp);
 				}
 			}
-			write_to_disk(t.id, temp);
+			//write_to_disk(t.id, temp);
 			distance_data[t.id] = temp;
 
+			uint32_t total = 0;
+			for (int i = 1; i <= n; ++i) {
+				for (int j = 1; j <= n; ++j) {
+					if (ch[i][j] != '*' && ch[i][j] != '#' && temp->data[i][j] != UINT16_MAX)
+						total += temp->data[i][j];
+				}
+			}
+			berth_distance_total.emplace_back(total, t.id);
+		}
+		std::sort(berth_distance_total.begin(), berth_distance_total.end());
+		for (int i = 0; i < 5; ++i) {
+			available_berth[i] = &berth[berth_distance_total[i].second];
 		}
 	}
 
+	Berth *available_berth[5];
 private:
 
 	void bfs_minimal_distance(uint8_t start_x, uint8_t start_y, DistanceMap *distanceMap) {
@@ -101,8 +116,7 @@ private:
 				uint8_t next_y = curr_y + direction[i][1];
 				if (next_x > 0 && next_x <= n && next_y > 0 && next_y <= n &&
 					ch[next_x][next_y] != '*' && ch[next_x][next_y] != '#' && !visited[next_x][next_y] &&
-					distanceMap->data[next_x][next_y] > distanceMap->data[curr_x][curr_y] + 1)
-				{
+					distanceMap->data[next_x][next_y] > distanceMap->data[curr_x][curr_y] + 1) {
 					visited[next_x][next_y] = true;
 					distanceMap->data[next_x][next_y] = distanceMap->data[curr_x][curr_y] + 1;
 					q.emplace(next_x, next_y);
@@ -123,6 +137,8 @@ private:
 	}
 
 	DistanceMap *distance_data[berth_num + 10];
+
+
 };
 
 MapManager *mapManager;
@@ -138,10 +154,14 @@ void Init() {
 		scanf("%d%d%d%d", &berth[id].x, &berth[id].y, &berth[id].transport_time,
 			  &berth[id].loading_speed);// 这里的x和y都是泊位的左上角
 
+		cerr << "berth data:\n";
 		cerr << berth[id].id << " " << berth[id].x << " " << berth[id].y << " " << berth[id].transport_time << " "
 			 << berth[id].loading_speed << endl;
 	}
 	scanf("%d", &boat_capacity);
+
+	cerr << "boat capacity = " << boat_capacity << endl;
+
 	char okk[50];
 	scanf("%s", okk);
 	assert(okk[0] == 'O' && okk[1] == 'K');
