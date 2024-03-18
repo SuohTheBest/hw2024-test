@@ -189,6 +189,14 @@ public:
 		}
 	}
 
+	void handle_boat_event() {
+		for (auto &i: boat) {
+			if (i.num == boat_capacity) {
+				GO(i.id);
+			}
+
+		}
+	}
 };
 
 
