@@ -191,14 +191,18 @@ public:
 
 	void handle_boat_event() {
 		for (auto &i: boat) {
-			if (i.num == boat_capacity) {
+			if (i.status == 0)continue;
+			if (i.status == 1 && i.num == boat_capacity) {
 				GO(i.id);
 			}
-
+			if (i.pos == -1) {
+				SHIP(i.id, i.assigned_berth);
+			}
 		}
 	}
 };
 
+BoatManager *boatManager;
 
 void Init() {
 	auto start = chrono::system_clock::now();
@@ -223,6 +227,7 @@ void Init() {
 	scanf("%s", okk);
 	assert(okk[0] == 'O' && okk[1] == 'K');
 	mapManager = new MapManager();
+	boatManager = new BoatManager();
 	for (int i = 0; i < 5; ++i) {
 		boat[i].id = i;
 	}
@@ -258,6 +263,10 @@ int main() {
 	Init();
 	for (int zhen = 1; zhen <= 15000; zhen++) {
 		int id = Input();
+		if (zhen != 1)
+			boatManager->handle_boat_event();
+		else
+			boatManager->init_boat();
 		for (int i = 0; i < robot_num; i++)
 			printf("move %d %d\n", i, rand() % 4);
 		puts("OK");
