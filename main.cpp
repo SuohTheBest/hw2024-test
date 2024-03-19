@@ -71,11 +71,6 @@ struct Good {
 	explicit Good(int time) :
 			time_start(time), val(0), x(0), y(0), weight(0) {};
 
-	double compute_energy(int dx, int dy) const {
-		int distance = abs(dx - x) + abs(dy - y);
-		if (distance > 100)return 0;
-		else return 1.0 * val / distance;
-	}
 };
 
 int money, boat_capacity, id;
@@ -324,6 +319,12 @@ public:
 //		}
 //	};
 
+	double compute_energy(Good& good,int dx, int dy) const {
+		int distance = abs(dx - good.x) + abs(dy - good.y);
+		if (distance > 100)return 0;
+		else return 1.0 * good.val / distance;
+	}
+
 	list<Good> good_list;
 private:
 	static bool cmp(Good &a, Good &b) {
@@ -369,6 +370,7 @@ public:
 		if (robot[robot_id].goods == 1) {
 			go_to_berth(robot_id, robot[robot_id].assigned_berth);
 		} else {
+
 			auto it = goodManager->good_list.begin();
 			while (it != goodManager->good_list.end()) {
 				auto &j = *it;
@@ -379,6 +381,7 @@ public:
 					it = goodManager->good_list.erase(it);
 					return;
 				}
+
 				it++;
 			}
 			move_to_lowest_energy(robot_id);
@@ -423,7 +426,6 @@ private:
 					boundary.push(newNode);
 				}
 			}
-
 		}
 	}
 
@@ -482,7 +484,7 @@ private:
 				continue;
 			double curr_energy = mapManager->energy_map->data[next_x][next_y];
 			for (auto &j: goodManager->good_list) {
-				curr_energy -= j.compute_energy(next_x, next_y);
+				curr_energy -= goodManager->compute_energy(j,next_x, next_y);
 			}
 			for (int j = 0; j < robot_num; ++j) {
 				if (j == robot_id)continue;
