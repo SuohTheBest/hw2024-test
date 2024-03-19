@@ -73,7 +73,7 @@ struct Good {
 
 	double compute_energy(int dx, int dy) const {
 		int distance = abs(dx - x) + abs(dy - y);
-		if (distance > 50)return 0;
+		if (distance > 100)return 0;
 		else return 1.0 * val / distance;
 	}
 };
@@ -138,8 +138,8 @@ public:
 			DistanceMap *temp = new DistanceMap();
 			for (int i = 0; i < 4; ++i) {
 				for (int j = 0; j < 4; ++j) {
-					int curr_x = t.x + i;
-					int curr_y = t.y + j;
+					int curr_x = 1 + t.x + i;
+					int curr_y = 1 + t.y + j;
 					temp->data[curr_x][curr_y] = 0;
 					bfs_minimal_distance(curr_x, curr_y, temp);
 				}
@@ -157,8 +157,27 @@ public:
 			berth_distance_total.emplace_back(total, t.id);
 		}
 		std::sort(berth_distance_total.begin(), berth_distance_total.end());
-		for (int i = 0; i < 5; ++i) {
-			available_berth[i] = &berth[berth_distance_total[i].second];
+
+		// 其实是找距离最远的港口，我现在觉得应该平均分配港口，避免港口堆在一起，但是代码写的一坨
+		available_berth[0] = &berth[berth_distance_total[0].second];
+		vector<int> selected;
+		selected.push_back(berth_distance_total[0].second);
+		for (int i = 1; i < 5; ++i) {
+			uint32_t max = 0;
+			int next_berth = -1;
+			for (auto j: berth_distance_total) {
+				if (find(selected.begin(), selected.end(), j.second) != selected.end())continue;
+				uint32_t curr_val = 0;
+				for (auto k: selected) {
+					curr_val += distance_data[j.second]->data[berth[k].x + 2][berth[k].y + 2];
+				}
+				if (curr_val > max) {
+					max = curr_val;
+					next_berth = j.second;
+				}
+			}
+			available_berth[i] = &berth[next_berth];
+			selected.push_back(next_berth);
 		}
 
 		energy_map = new EnergyMap();
@@ -256,8 +275,7 @@ public:
 	static void handle_boat_event() {
 		for (auto &i: boat) {
 			if (i.status == 0)continue;
-			if (berth[i.assigned_berth].transport_time+curr_zhen>14998)
-			{
+			if (berth[i.assigned_berth].transport_time + curr_zhen > 14999) {
 				GO(i.id);
 				continue;
 			}
@@ -422,6 +440,16 @@ private:
 			int next_x = curr_x + direction[i][0];
 			int next_y = curr_y + direction[i][1];
 			int val = mapManager->distance_data[berth_id]->data[next_x][next_y];
+			for (int j = 0; j < robot_num; ++j) {
+				if (j == robot_id)continue;
+				int distance = Util::manhattanDistance(next_x, next_y, robot[j].x, robot[j].y);
+				if (distance == 0) {
+					val = INT_MAX;
+					break;
+				} else if (distance < 3) {
+					val += 4;
+				}
+			}
 			if (val < min) {
 				min = val;
 				next_move = i;
@@ -444,18 +472,21 @@ private:
 			int next_y = curr_y + direction[i][1];
 			int flag = false;
 			for (int j = 0; j < robot_id; ++j) {
-				if (robot[j].x == curr_x && robot[j].y == curr_y) {
+				if (robot[j].x == next_x && robot[j].y == next_y) {
 					flag = true;
 					break;
 				}
 			}
-			if (flag || mapManager->energy_map->data[next_x][next_y] > 4000)continue;
+			if (flag || mapManager->energy_map->data[next_x][next_y] > 4000 || next_x <= 0 || next_x > 200 ||
+				next_y <= 0 || next_y > 200)
+				continue;
 			double curr_energy = mapManager->energy_map->data[next_x][next_y];
 			for (auto &j: goodManager->good_list) {
 				curr_energy -= j.compute_energy(next_x, next_y);
 			}
-			for (int j = 0; j < robot_id; ++j) {
-				if (Util::manhattanDistance(curr_x, curr_y, robot[robot_id].x, robot[robot_id].y) < 3) {
+			for (int j = 0; j < robot_num; ++j) {
+				if (j == robot_id)continue;
+				else if (Util::manhattanDistance(next_x, next_y, robot[j].x, robot[j].y) < 3) {
 					curr_energy += 10;
 				}
 			}
@@ -482,6 +513,8 @@ private:
 		if (d % 2 == 0)return d + 1;
 		else return d - 1;
 	}
+
+
 };
 
 RobotManager *robotManager;
@@ -534,13 +567,15 @@ int Input(int zhen) {
 		int x, y, val;
 		scanf("%d%d%d", &x, &y, &val);
 		Good t(zhen);
-		t.x = x;
-		t.y = y;
+		t.x = x + 1;
+		t.y = y + 1;
 		t.val = val;
 		goodManager->add_new_good_2(t);
 	}
 	for (int i = 0; i < robot_num; i++) {
 		scanf("%d%d%d%d", &robot[i].goods, &robot[i].x, &robot[i].y, &robot[i].status);
+		robot[i].x += 1;
+		robot[i].y += 1;
 	}
 	for (int i = 0; i < boat_num; i++) {
 		scanf("%d%d\n", &boat[i].status, &boat[i].pos);
@@ -557,8 +592,15 @@ int main() {
 		int id = Input(curr_zhen);
 		if (curr_zhen != 1)
 			boatManager->handle_boat_event();
-		else
+		else {
 			boatManager->init_boat();
+			cerr << "robot data:" << endl;
+			for (int i = 0; i < robot_num; ++i) {
+				cerr << robot[i].x << "\t" << robot[i].y << "\t" << ch[robot[i].x][robot[i].y] << endl;
+			}
+
+		}
+
 		for (int i = 0; i < robot_num; i++) {
 			robotManager->handle_robot_event(i);
 		}
