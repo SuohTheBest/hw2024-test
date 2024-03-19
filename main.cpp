@@ -58,12 +58,34 @@ struct Boat {
 			num(0), id(0), pos(0), status(0), assigned_berth(-1) {};
 } boat[boat_num];
 
+struct Good {
+	int x, y;
+	int val;
+	double weight;
+	int time_start;
+	int assigned_berth;//货物被分配到哪个港口
+
+	Good() = default;
+
+	explicit Good(int time) :
+			time_start(time), val(0), x(0), y(0), weight(0) {};
+};
+
 int money, boat_capacity, id;
 int direction[4][2] = {{0,  1},
 					   {0,  -1},
 					   {-1, 0},
 					   {1,  0}};
 char ch[N][N];
+
+int curr_zhen;
+
+class Util {
+public:
+	static int manhattanDistance(int x1, int y1, int x2, int y2) {
+		return abs(x1 - x2) + abs(y1 - y2);
+	}
+};
 
 class RandomManager {
 public:
@@ -90,6 +112,14 @@ class MapManager {
 			memset(data, UINT16_MAX, sizeof(data));
 		}
 
+	};
+
+	struct EnergyMap {
+		double data[n + 2][n + 2];
+
+		EnergyMap() {
+			memset(data, 0, sizeof(data));
+		}
 	};
 
 public:
@@ -150,11 +180,11 @@ public:
 
 private:
 
-	void bfs_minimal_distance(uint8_t start_x, uint8_t start_y, DistanceMap *distanceMap) {
+	static void bfs_minimal_distance(uint8_t start_x, uint8_t start_y, DistanceMap *distanceMap) {
 		bool visited[n + 2][n + 2];
 		memset(visited, false, sizeof(visited));
 		std::queue<std::pair<uint8_t, uint8_t>> q;
-		q.push({start_x, start_y});
+		q.emplace(start_x, start_y);
 		visited[start_x][start_y] = true;
 		distanceMap->data[start_x][start_y] = 0;
 
@@ -235,12 +265,19 @@ class RobotManager {
 
 public:
 
+	void handle_robot_event(int robot_id) {
+
+	}
+
+
+private:
 	void aStar(int startX, int startY, int targetX, int targetY) {
 		bool visited[n + 2][n + 2];
 		stack<int> path;
 		memset(visited, false, sizeof(visited));
 		priority_queue<Node *, vector<Node *>, decltype(&comp_node)> boundary;
-		boundary.push(new Node(startX, startY, 0, manhattanDistance(startX, startY, targetX, targetY), -1, nullptr));
+		boundary.push(
+				new Node(startX, startY, 0, Util::manhattanDistance(startX, startY, targetX, targetY), -1, nullptr));
 		while (!boundary.empty()) {
 			Node *curr_node = boundary.top();
 			boundary.pop();
@@ -265,7 +302,7 @@ public:
 					new_x <= 200 &&
 					new_y > 0 && new_y <= 200) {
 					int new_g = curr_node->g + 1; // 每次移动代价为1
-					int new_h = manhattanDistance(new_x, new_y, targetX, targetY);
+					int new_h = Util::manhattanDistance(new_x, new_y, targetX, targetY);
 					Node *newNode = new Node(new_x, new_y, new_g, new_h, i, curr_node);
 					boundary.push(newNode);
 				}
@@ -290,12 +327,6 @@ public:
 		MOVE(robot_id, next_move);
 	}
 
-
-private:
-	static int manhattanDistance(int x1, int y1, int x2, int y2) {
-		return abs(x1 - x2) + abs(y1 - y2);
-	}
-
 	static bool comp_node(Node *a, Node *b) {
 		int f1 = a->h + a->g;
 		int f2 = b->h + b->g;
@@ -310,6 +341,61 @@ private:
 };
 
 RobotManager *robotManager;
+
+class GoodManager {
+public:
+
+	void get(int x, int y) {
+		for (int i = 0; i < good_list.size(); i++) {
+			if (good_list[i].x == x && good_list[i].y == y) {
+				good_list.erase(good_list.begin() + i);
+			}
+		}
+	}
+
+	void add_new_good(Good &good) {
+		compute_good_weight(good);
+		if (!good_list.empty() && good_list.end()->weight >= good.weight)return;
+		else {
+			good_list.push_back(good);
+		}
+	}
+
+	void compute_priority() {
+		std::sort(good_list.begin(), good_list.end(), cmp);
+		int size = good_list.size();
+		while (size > 20) {
+			good_list.pop_back();
+			size--;
+		}
+	};
+
+	deque<Good> good_list;
+private:
+	static bool cmp(Good &a, Good &b) {
+		double wa = (curr_zhen - a.time_start > 999) ? -1 : a.weight;
+		double wb = (curr_zhen - b.time_start > 999) ? -1 : b.weight;
+		return wa > wb;
+	}
+
+	static void compute_good_weight(Good &good) {//计算权重
+		double t;
+		uint16_t min = UINT16_MAX;
+		int berth_id = -1;
+		for (auto &i: mapManager->available_berth) {
+			uint16_t val = mapManager->distance_data[i->id]->data[good.x][good.y];
+			if (val < min) {
+				min = val;
+				berth_id = i->id;
+			}
+		}
+		t = good.val / (1.0 + min);
+		good.weight = t;
+		good.assigned_berth = berth_id;
+	}
+};
+
+GoodManager *goodManager;
 
 void Init() {
 	auto start = chrono::system_clock::now();
@@ -338,6 +424,7 @@ void Init() {
 	mapManager = new MapManager();
 	boatManager = new BoatManager();
 	robotManager = new RobotManager();
+	goodManager = new GoodManager();
 	for (int i = 0; i < 5; ++i) {
 		boat[i].id = i;
 	}
@@ -348,13 +435,18 @@ void Init() {
 	fflush(stdout);
 }
 
-int Input() {
+int Input(int zhen) {
 	scanf("%d%d", &id, &money);
 	int num;
 	scanf("%d", &num);
 	for (int i = 1; i <= num; i++) {
 		int x, y, val;
 		scanf("%d%d%d", &x, &y, &val);
+		Good t(zhen);
+		t.x = x;
+		t.y = y;
+		t.val = val;
+		goodManager->add_new_good(t);
 	}
 	for (int i = 0; i < robot_num; i++) {
 		int sts;
@@ -371,9 +463,9 @@ int Input() {
 
 int main() {
 	Init();
-	for (int zhen = 1; zhen <= 15000; zhen++) {
-		int id = Input();
-		if (zhen != 1)
+	for (curr_zhen = 1; curr_zhen <= 15000; curr_zhen++) {
+		int id = Input(curr_zhen);
+		if (curr_zhen != 1)
 			boatManager->handle_boat_event();
 		else
 			boatManager->init_boat();
