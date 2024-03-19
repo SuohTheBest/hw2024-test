@@ -18,13 +18,14 @@ const int boat_num = 5;
 struct Robot {
 	int x, y, goods;
 	int status;
-	int mbx, mby;
+	int assigned_berth;
 
-	Robot() {}
+	Robot() { assigned_berth = -1; }
 
 	Robot(int startX, int startY) {
 		x = startX;
 		y = startY;
+		assigned_berth = -1;
 	}
 } robot[robot_num + 10];
 
@@ -69,6 +70,12 @@ struct Good {
 
 	explicit Good(int time) :
 			time_start(time), val(0), x(0), y(0), weight(0) {};
+
+	double compute_energy(int dx, int dy) const {
+		int distance = abs(dx - x) + abs(dy - y);
+		if (distance > 50)return 0;
+		else return 1.0 * val / distance;
+	}
 };
 
 int money, boat_capacity, id;
@@ -131,8 +138,8 @@ public:
 			DistanceMap *temp = new DistanceMap();
 			for (int i = 0; i < 4; ++i) {
 				for (int j = 0; j < 4; ++j) {
-					int curr_x = t.x + i + 1;
-					int curr_y = t.y + j + 1;
+					int curr_x = t.x + i;
+					int curr_y = t.y + j;
 					temp->data[curr_x][curr_y] = 0;
 					bfs_minimal_distance(curr_x, curr_y, temp);
 				}
@@ -152,6 +159,14 @@ public:
 		std::sort(berth_distance_total.begin(), berth_distance_total.end());
 		for (int i = 0; i < 5; ++i) {
 			available_berth[i] = &berth[berth_distance_total[i].second];
+		}
+
+		energy_map = new EnergyMap();
+		for (int i = 1; i <= n; ++i) {
+			for (int j = 1; j <= n; ++j) {
+				if (ch[i][j] == '*' || ch[i][j] == '#')
+					energy_map->data[i][j] = 5000.0;
+			}
 		}
 	}
 
@@ -177,6 +192,7 @@ public:
 
 	Berth *available_berth[boat_num];
 	DistanceMap *distance_data[berth_num + 10];
+	EnergyMap *energy_map;
 
 private:
 
@@ -240,6 +256,11 @@ public:
 	static void handle_boat_event() {
 		for (auto &i: boat) {
 			if (i.status == 0)continue;
+			if (berth[i.assigned_berth].transport_time+curr_zhen>14998)
+			{
+				GO(i.id);
+				continue;
+			}
 			if (i.status == 1 && i.num == boat_capacity) {
 				GO(i.id);
 			}
@@ -251,6 +272,66 @@ public:
 };
 
 BoatManager *boatManager;
+
+class GoodManager {
+public:
+
+	void add_new_good(Good &good) {
+		compute_good_weight(good);
+		if (!good_list.empty() && good_list.end()->weight >= good.weight)return;
+		else {
+			good_list.push_back(good);
+		}
+	}
+
+	//存储所有的物品，删除过期的物品
+	void add_new_good_2(Good &good) {
+		compute_good_weight(good);
+		good_list.push_back(good);
+	}
+
+	//删除队列开头的过期物品
+	void delete_expire_good() {
+		if (!good_list.empty()) {
+			while (curr_zhen - good_list.begin()->time_start > 999)good_list.pop_front();
+		}
+	}
+
+//	void compute_priority() {
+//		//std::sort(good_list.begin(), good_list.end(), cmp);
+//		int size = good_list.size();
+//		while (size > 20) {
+//			good_list.pop_back();
+//			size--;
+//		}
+//	};
+
+	list<Good> good_list;
+private:
+	static bool cmp(Good &a, Good &b) {
+		double wa = (curr_zhen - a.time_start > 999) ? -1 : a.weight;
+		double wb = (curr_zhen - b.time_start > 999) ? -1 : b.weight;
+		return wa > wb;
+	}
+
+	static void compute_good_weight(Good &good) {//计算权重
+		double t;
+		uint16_t min = UINT16_MAX;
+		int berth_id = -1;
+		for (auto &i: mapManager->available_berth) {
+			uint16_t val = mapManager->distance_data[i->id]->data[good.x][good.y];
+			if (val < min) {
+				min = val;
+				berth_id = i->id;
+			}
+		}
+		t = good.val / (1.0 + min);
+		good.weight = t;
+		good.assigned_berth = berth_id;
+	}
+};
+
+GoodManager *goodManager;
 
 class RobotManager {
 	struct Node {
@@ -265,8 +346,25 @@ class RobotManager {
 
 public:
 
-	void handle_robot_event(int robot_id) {
-
+	static void handle_robot_event(int robot_id) {
+		if (robot[robot_id].status == 0)return;
+		if (robot[robot_id].goods == 1) {
+			go_to_berth(robot_id, robot[robot_id].assigned_berth);
+		} else {
+			auto it = goodManager->good_list.begin();
+			while (it != goodManager->good_list.end()) {
+				auto &j = *it;
+				if (j.x == robot[robot_id].x && j.y == robot[robot_id].y) {
+					GET(robot_id);
+					robot[robot_id].assigned_berth = j.assigned_berth;
+					go_to_berth(robot_id, robot[robot_id].assigned_berth);
+					it = goodManager->good_list.erase(it);
+					return;
+				}
+				it++;
+			}
+			move_to_lowest_energy(robot_id);
+		}
 	}
 
 
@@ -311,12 +409,18 @@ private:
 		}
 	}
 
-	void go_to_berth(int robot_id, int berth_id) {
+	static void go_to_berth(int robot_id, int berth_id) {
 		int min = INT_MAX;
 		int next_move = -1;
+		int curr_x = robot[robot_id].x;
+		int curr_y = robot[robot_id].y;
+		if (mapManager->distance_data[berth_id]->data[curr_x][curr_y] == 0) {
+			PULL(robot_id);
+			return;
+		}
 		for (int i = 0; i < 4; ++i) {
-			int next_x = robot[robot_id].x + direction[i][0];
-			int next_y = robot[robot_id].y + direction[i][1];
+			int next_x = curr_x + direction[i][0];
+			int next_y = curr_y + direction[i][1];
 			int val = mapManager->distance_data[berth_id]->data[next_x][next_y];
 			if (val < min) {
 				min = val;
@@ -325,6 +429,46 @@ private:
 				next_move = i;
 		}
 		MOVE(robot_id, next_move);
+		robot[robot_id].x += direction[next_move][0];
+		robot[robot_id].y += direction[next_move][1];
+	}
+
+	static void move_to_lowest_energy(int robot_id) {
+		double min_energy = 5000;
+		int next_move = -1;
+		//bool is_move_and_hold= false;
+		for (int i = 0; i < 4; ++i) {
+			int curr_x = robot[robot_id].x;
+			int curr_y = robot[robot_id].y;
+			int next_x = curr_x + direction[i][0];
+			int next_y = curr_y + direction[i][1];
+			int flag = false;
+			for (int j = 0; j < robot_id; ++j) {
+				if (robot[j].x == curr_x && robot[j].y == curr_y) {
+					flag = true;
+					break;
+				}
+			}
+			if (flag || mapManager->energy_map->data[next_x][next_y] > 4000)continue;
+			double curr_energy = mapManager->energy_map->data[next_x][next_y];
+			for (auto &j: goodManager->good_list) {
+				curr_energy -= j.compute_energy(next_x, next_y);
+			}
+			for (int j = 0; j < robot_id; ++j) {
+				if (Util::manhattanDistance(curr_x, curr_y, robot[robot_id].x, robot[robot_id].y) < 3) {
+					curr_energy += 10;
+				}
+			}
+			if (curr_energy < min_energy || (curr_energy == min_energy && randomManager->get_random() < 0.5)) {
+				min_energy = curr_energy;
+				next_move = i;
+			}
+		}
+		if (next_move != -1) {
+			MOVE(robot_id, next_move);
+			robot[robot_id].x += direction[next_move][0];
+			robot[robot_id].y += direction[next_move][1];
+		}
 	}
 
 	static bool comp_node(Node *a, Node *b) {
@@ -342,60 +486,6 @@ private:
 
 RobotManager *robotManager;
 
-class GoodManager {
-public:
-
-	void get(int x, int y) {
-		for (int i = 0; i < good_list.size(); i++) {
-			if (good_list[i].x == x && good_list[i].y == y) {
-				good_list.erase(good_list.begin() + i);
-			}
-		}
-	}
-
-	void add_new_good(Good &good) {
-		compute_good_weight(good);
-		if (!good_list.empty() && good_list.end()->weight >= good.weight)return;
-		else {
-			good_list.push_back(good);
-		}
-	}
-
-	void compute_priority() {
-		std::sort(good_list.begin(), good_list.end(), cmp);
-		int size = good_list.size();
-		while (size > 20) {
-			good_list.pop_back();
-			size--;
-		}
-	};
-
-	deque<Good> good_list;
-private:
-	static bool cmp(Good &a, Good &b) {
-		double wa = (curr_zhen - a.time_start > 999) ? -1 : a.weight;
-		double wb = (curr_zhen - b.time_start > 999) ? -1 : b.weight;
-		return wa > wb;
-	}
-
-	static void compute_good_weight(Good &good) {//计算权重
-		double t;
-		uint16_t min = UINT16_MAX;
-		int berth_id = -1;
-		for (auto &i: mapManager->available_berth) {
-			uint16_t val = mapManager->distance_data[i->id]->data[good.x][good.y];
-			if (val < min) {
-				min = val;
-				berth_id = i->id;
-			}
-		}
-		t = good.val / (1.0 + min);
-		good.weight = t;
-		good.assigned_berth = berth_id;
-	}
-};
-
-GoodManager *goodManager;
 
 void Init() {
 	auto start = chrono::system_clock::now();
@@ -404,14 +494,15 @@ void Init() {
 
 	cerr << "berth data:\n";
 	for (int i = 0; i < berth_num; i++) {
-		int id;
-		scanf("%d", &id);
-		berth[id].id = id;
-		scanf("%d%d%d%d", &berth[id].x, &berth[id].y, &berth[id].transport_time,
-			  &berth[id].loading_speed);// 这里的x和y都是泊位的左上角
+		int berth_id;
+		scanf("%d", &berth_id);
+		berth[berth_id].id = berth_id;
+		scanf("%d%d%d%d", &berth[berth_id].x, &berth[berth_id].y, &berth[berth_id].transport_time,
+			  &berth[berth_id].loading_speed);// 这里的x和y都是泊位的左上角
 
-		cerr << berth[id].id << " " << berth[id].x << " " << berth[id].y << " " << berth[id].transport_time << " "
-			 << berth[id].loading_speed << endl;
+		cerr << berth[berth_id].id << " " << berth[berth_id].x << " " << berth[berth_id].y << " "
+			 << berth[berth_id].transport_time << " "
+			 << berth[berth_id].loading_speed << endl;
 	}
 	scanf("%d", &boat_capacity);
 
@@ -446,11 +537,10 @@ int Input(int zhen) {
 		t.x = x;
 		t.y = y;
 		t.val = val;
-		goodManager->add_new_good(t);
+		goodManager->add_new_good_2(t);
 	}
 	for (int i = 0; i < robot_num; i++) {
-		int sts;
-		scanf("%d%d%d%d", &robot[i].goods, &robot[i].x, &robot[i].y, &sts);
+		scanf("%d%d%d%d", &robot[i].goods, &robot[i].x, &robot[i].y, &robot[i].status);
 	}
 	for (int i = 0; i < boat_num; i++) {
 		scanf("%d%d\n", &boat[i].status, &boat[i].pos);
@@ -469,8 +559,9 @@ int main() {
 			boatManager->handle_boat_event();
 		else
 			boatManager->init_boat();
-		for (int i = 0; i < robot_num; i++)
-			printf("move %d %d\n", i, rand() % 4);
+		for (int i = 0; i < robot_num; i++) {
+			robotManager->handle_robot_event(i);
+		}
 		puts("OK");
 		fflush(stdout);
 	}
