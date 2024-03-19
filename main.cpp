@@ -390,13 +390,13 @@ public:
 
 
 private:
-	void aStar(int startX, int startY, int targetX, int targetY) {
+	void aStar(int robot_id, int targetX, int targetY) {
 		bool visited[n + 2][n + 2];
 		stack<int> path;
 		memset(visited, false, sizeof(visited));
 		priority_queue<Node *, vector<Node *>, decltype(&comp_node)> boundary;
 		boundary.push(
-				new Node(startX, startY, 0, Util::manhattanDistance(startX, startY, targetX, targetY), -1, nullptr));
+				new Node(robot[robot_id].x, robot[robot_id].y, 0, Util::manhattanDistance(robot[robot_id].x, robot[robot_id].x, targetX, targetY), -1, nullptr));
 		while (!boundary.empty()) {
 			Node *curr_node = boundary.top();
 			boundary.pop();
@@ -427,6 +427,7 @@ private:
 				}
 			}
 		}
+		MOVE(robot_id,path.top());
 	}
 
 	static void go_to_berth(int robot_id, int berth_id) {
