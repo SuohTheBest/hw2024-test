@@ -311,12 +311,8 @@ public:
 
 	static void init_boat() {
 		for (auto &i: boat) {
-			if (mapManager->is_in_available_berth(i.pos))i.assigned_berth = i.pos;
-		}
-		for (auto &i: boat) {
 			if (i.assigned_berth == -1) {
-				int available_berth = mapManager->find_available_berth();
-				i.assigned_berth = available_berth;
+				i.assigned_berth = mapManager->find_available_berth();;
 			}
 			assert(i.assigned_berth != -2);
 			SHIP(i.id, i.assigned_berth);
@@ -324,9 +320,9 @@ public:
 	}
 
 	static void handle_boat_event() {
-		cerr << "boat status:" << endl;
+//		cerr << "boat status:" << endl;
 		for (auto &i: boat) {
-			cerr << i.status << "\t" << i.num << endl;
+			//cerr << i.status << "\t" << i.num << endl;
 			if (i.status == 0)continue;
 			if (berth[i.assigned_berth].transport_time + curr_zhen > 14998) {
 				GO(i.id);
@@ -367,6 +363,7 @@ public:
 	void add_new_good_2(Good &good) {
 		compute_good_weight(good);
 		good_list.push_back(good);
+		delete_expire_good();
 	}
 
 	//删除队列开头的过期物品
@@ -454,15 +451,22 @@ class RobotManager {
 public:
 
 	void handle_robot_event(int robot_id) {
-		if (robot[robot_id].status == 0)return;
+		if (robot[robot_id].status == 0) {
+			return;
+		}
 		if (robot[robot_id].goods == 1) {
 			go_to_berth(robot_id, robot[robot_id].assigned_berth);
-		} else if (astarData[robot_id].is_enabled) {
+			return;
+		}
+		if (astarData[robot_id].is_enabled) {
 			if (astarData[robot_id].path.empty()) {
 				astarData[robot_id].is_enabled = false;
 			} else {
-				MOVE(robot_id, astarData[robot_id].path.top());
+				int next_move = astarData[robot_id].path.top();
 				astarData[robot_id].path.pop();
+				MOVE(robot_id, next_move);
+				robot[robot_id].x += direction[next_move][0];
+				robot[robot_id].y += direction[next_move][1];
 				return;
 			}
 		}
@@ -474,6 +478,7 @@ public:
 			auto &j = *it;
 			if (j.x == robot[robot_id].x && j.y == robot[robot_id].y) {
 				GET(robot_id);
+				astarData[robot_id].is_enabled = false;
 				robot[robot_id].assigned_berth = j.assigned_berth;
 				go_to_berth(robot_id, robot[robot_id].assigned_berth);
 				it = goodManager->good_list.erase(it);
