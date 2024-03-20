@@ -45,23 +45,23 @@ struct Berth // 泊位,地图从1开始，所以注意x和y要+1
 	int x;
 	int y;
 	int transport_time;
+	int num;
 	int loading_speed;
-	int assigned_boat;
 	bool is_occupied;
 
 	Berth() {
 		x = -1;
-		assigned_boat = -1;
+		num = 0;
 		is_occupied = false;
 	}
 
 	Berth(int x, int y, int transport_time, int loading_speed) {
 		this->x = x;
 		this->y = y;
+		this->num = 0;
 		this->transport_time = transport_time;
 		this->loading_speed = loading_speed;
 		this->is_occupied = false;
-		this->assigned_boat = -1;
 	}
 } berth[berth_num + 10];
 
@@ -140,7 +140,6 @@ public:
 	static int manhattanDistance(int x1, int y1, int x2, int y2) {
 		return abs(x1 - x2) + abs(y1 - y2);
 	}
-
 };
 
 class RandomManager {
@@ -318,7 +317,6 @@ public:
 			if (i.assigned_berth == -1) {
 				int available_berth = mapManager->find_available_berth();
 				i.assigned_berth = available_berth;
-				berth[available_berth].assigned_boat = i.id;
 			}
 			assert(i.assigned_berth != -2);
 			SHIP(i.id, i.assigned_berth);
@@ -334,13 +332,19 @@ public:
 				GO(i.id);
 				i.num = 0;
 				continue;
-			}
-			if (i.status == 1 && i.num == boat_capacity) {
+			} else if (i.status == 1 && i.num >= boat_capacity) {
 				GO(i.id);
+				i.num -= boat_capacity;
+				berth[i.assigned_berth].num += i.num;
 				i.num = 0;
-			}
-			if (i.pos == -1) {
+			} else if (i.pos == -1) {
 				SHIP(i.id, i.assigned_berth);
+			} else {
+				Berth &b = berth[i.assigned_berth];
+				if (b.num >= b.loading_speed) {
+					b.num -= b.loading_speed;
+					i.num += b.loading_speed;
+				}
 			}
 		}
 	}
@@ -559,7 +563,7 @@ private:
 		int curr_y = robot[robot_id].y;
 		if (mapManager->distance_data[berth_id]->data[curr_x][curr_y] == 0) {
 			PULL(robot_id);
-			boat[berth[robot[robot_id].assigned_berth].assigned_boat].num++;
+			berth[berth_id].num++;
 			return;
 		}
 		for (int i = 0; i < 4; ++i) {
