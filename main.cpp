@@ -405,10 +405,9 @@ GoodManager *goodManager;
 
 class RobotManager {
 	struct Node {
-		int x, y;
 		int g, h;
 		int next; // 方向,0→	1← 2↑ 3↓
-		bool is_visited;
+		int is_visited;
 
 		Node() {
 			next = -1;
@@ -416,9 +415,22 @@ class RobotManager {
 		}
 	};
 
+	struct NodePos {
+		int x, y, f;
+
+		NodePos(int x, int y, int f) :
+				x(x), y(y), f(f) {};
+	};
+
+	struct cmp_node {
+		bool operator()(const NodePos &a, const NodePos &b) {
+			return a.f > b.f;
+		}
+	};
+
 public:
 
-	static void handle_robot_event(int robot_id) {
+	void handle_robot_event(int robot_id) {
 		if (robot[robot_id].status == 0)return;
 		if (robot[robot_id].goods == 1) {
 			go_to_berth(robot_id, robot[robot_id].assigned_berth);
@@ -455,52 +467,53 @@ public:
 
 
 private:
-	static void aStar(int robot_id, Good &good) {
+	void aStar(int robot_id, Good &good) {
 		int target_x = good.x;
 		int target_y = good.y;
 		int curr_x = robot[robot_id].x;
 		int curr_y = robot[robot_id].y;
-		Node visited[n + 2][n + 2];
+		memset(visited, 0, sizeof(visited));
 		stack<int> path;
-		priority_queue<Node *, vector<Node *>, decltype(&comp_node)> boundary;
+		priority_queue<NodePos, vector<NodePos>, cmp_node> boundary;
 		visited[curr_x][curr_y].g = 0;
 		visited[curr_x][curr_y].h = compute_h(curr_x, curr_y, good);
-		visited[curr_x][curr_y].x = curr_x;
-		visited[curr_x][curr_y].y = curr_y;
-		boundary.push(&visited[robot[robot_id].x][robot[robot_id].y]);
+		visited[curr_x][curr_y].next = -1;
+		boundary.emplace(curr_x, curr_y, visited[curr_x][curr_y].h);
 		while (!boundary.empty()) {
-			Node *curr_node = boundary.top();
+			NodePos curr_pos = boundary.top();
 			boundary.pop();
-			curr_x = curr_node->x;
-			curr_y = curr_node->y;
+			curr_x = curr_pos.x;
+			curr_y = curr_pos.y;
+			Node curr_node = visited[curr_x][curr_y];
 			if (curr_x == target_x && curr_y == target_y) {
 				// 找到目标位置，回溯路径
-				while (curr_node->next != -1) {
-					path.push(opposite_direction(curr_node->next));
-					curr_x += direction[curr_node->next][0];
-					curr_y += direction[curr_node->next][1];
-					curr_node = &visited[curr_x][curr_y];
+				while (curr_node.next != -1) {
+					int next_direction = opposite_direction(curr_node.next);
+					path.push(next_direction);
+					curr_x += direction[next_direction][0];
+					curr_y += direction[next_direction][1];
+					curr_node = visited[curr_x][curr_y];
 				}
 				break;
 			}
 
-			visited[curr_x][curr_y].is_visited = true;
+			visited[curr_x][curr_y].is_visited = 2;
 
 			// 扩展相邻节点
 			for (int i = 0; i < 4; i++) {
 				int new_x = curr_x + direction[i][0];
 				int new_y = curr_y + direction[i][1];
 
-				if (!visited[new_x][new_y].is_visited && ch[new_x][new_y] != '#' && ch[new_x][new_y] != '*' &&
+				if (visited[new_x][new_y].is_visited == 0 && ch[new_x][new_y] != '#' && ch[new_x][new_y] != '*' &&
 					ch[new_x][new_y] &&
 					new_x > 0 &&
 					new_x <= 200 &&
 					new_y > 0 && new_y <= 200) {
-					visited[new_x][new_y].g = curr_node->g + 1;// 每次移动代价为1
+					visited[new_x][new_y].g = curr_node.g + 1;// 每次移动代价为1
 					visited[new_x][new_y].h = compute_h(new_x, new_y, good);
-					visited[new_x][new_y].x = new_x;
-					visited[new_x][new_y].y = new_y;
-					boundary.push(&visited[new_x][new_y]);
+					visited[new_x][new_y].next = i;
+					visited[new_x][new_y].is_visited = 1;
+					boundary.emplace(new_x, new_y, visited[new_x][new_y].g + visited[new_x][new_y].h);
 				}
 			}
 		}
@@ -584,23 +597,18 @@ private:
 	}
 
 	static int compute_h(int x, int y, Good &good) {
+//		return Util::manhattanDistance(x, y, good.x, good.y);
 		return Util::manhattanDistance(x, y, good.x, good.y) +
 			   abs(mapManager->distance_data[good.assigned_berth]->data[x][y] -
 				   mapManager->distance_data[good.assigned_berth]->data[good.x][good.y]);
 	}
-
-	static bool comp_node(Node *a, Node *b) {
-		int f1 = a->h + a->g;
-		int f2 = b->h + b->g;
-		if (f1 == f2)return randomManager->get_random() < 0.5;//引入随机性，避免每次生成相同的路线，降低撞车概率
-		return f1 < f2;
-	};
 
 	static int opposite_direction(int d) {
 		if (d % 2 == 0)return d + 1;
 		else return d - 1;
 	}
 
+	Node visited[n + 2][n + 2];
 
 };
 
