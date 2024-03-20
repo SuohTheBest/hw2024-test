@@ -46,10 +46,12 @@ struct Berth // 泊位,地图从1开始，所以注意x和y要+1
 	int y;
 	int transport_time;
 	int loading_speed;
+	int assigned_boat;
 	bool is_occupied;
 
 	Berth() {
 		x = -1;
+		assigned_boat = -1;
 		is_occupied = false;
 	}
 
@@ -59,6 +61,7 @@ struct Berth // 泊位,地图从1开始，所以注意x和y要+1
 		this->transport_time = transport_time;
 		this->loading_speed = loading_speed;
 		this->is_occupied = false;
+		this->assigned_boat = -1;
 	}
 } berth[berth_num + 10];
 
@@ -312,21 +315,29 @@ public:
 			if (mapManager->is_in_available_berth(i.pos))i.assigned_berth = i.pos;
 		}
 		for (auto &i: boat) {
-			if (i.assigned_berth == -1)i.assigned_berth = mapManager->find_available_berth();
+			if (i.assigned_berth == -1) {
+				int available_berth = mapManager->find_available_berth();
+				i.assigned_berth = available_berth;
+				berth[available_berth].assigned_boat = i.id;
+			}
 			assert(i.assigned_berth != -2);
 			SHIP(i.id, i.assigned_berth);
 		}
 	}
 
 	static void handle_boat_event() {
+		cerr << "boat status:" << endl;
 		for (auto &i: boat) {
+			cerr << i.status << "\t" << i.num << endl;
 			if (i.status == 0)continue;
 			if (berth[i.assigned_berth].transport_time + curr_zhen > 14998) {
 				GO(i.id);
+				i.num = 0;
 				continue;
 			}
 			if (i.status == 1 && i.num == boat_capacity) {
 				GO(i.id);
+				i.num = 0;
 			}
 			if (i.pos == -1) {
 				SHIP(i.id, i.assigned_berth);
@@ -422,6 +433,14 @@ class RobotManager {
 				x(x), y(y), f(f) {};
 	};
 
+	struct AstarData {
+		bool is_enabled;
+		stack<int> path;
+
+		AstarData() :
+				is_enabled(false) {};
+	};
+
 	struct cmp_node {
 		bool operator()(const NodePos &a, const NodePos &b) {
 			return a.f > b.f;
@@ -434,35 +453,47 @@ public:
 		if (robot[robot_id].status == 0)return;
 		if (robot[robot_id].goods == 1) {
 			go_to_berth(robot_id, robot[robot_id].assigned_berth);
-		} else {
-			uint32_t min_distance = UINT32_MAX;
-			auto min_it = goodManager->good_list.end();
-			auto it = goodManager->good_list.begin();
-			while (it != goodManager->good_list.end()) {
-				auto &j = *it;
-				if (j.x == robot[robot_id].x && j.y == robot[robot_id].y) {
-					GET(robot_id);
-					robot[robot_id].assigned_berth = j.assigned_berth;
-					go_to_berth(robot_id, robot[robot_id].assigned_berth);
-					it = goodManager->good_list.erase(it);
-					return;
-				}
-				// 机器人到物品实际距离的估计值，是max(曼哈顿距离,bfs图中两点差的绝对值)
-				uint32_t curr_distance = max(
-						Util::manhattanDistance(it->x, it->y, robot[robot_id].x, robot[robot_id].y),
-						abs(mapManager->distance_data[j.assigned_berth]->data[it->x][it->y] -
-							mapManager->distance_data[j.assigned_berth]->data[robot[robot_id].x][robot[robot_id].y]));
-				if (curr_distance < min_distance) {
-					min_distance = curr_distance;
-					min_it = it;
-				}
-				it++;
+		} else if (astarData[robot_id].is_enabled) {
+			if (astarData[robot_id].path.empty()) {
+				astarData[robot_id].is_enabled = false;
+			} else {
+				MOVE(robot_id, astarData[robot_id].path.top());
+				astarData[robot_id].path.pop();
+				return;
 			}
-			if (min_distance >= 15)
-				move_to_lowest_energy(robot_id);
-			else
-				aStar(robot_id, *min_it);
 		}
+
+		uint32_t min_distance = UINT32_MAX;
+		auto min_it = goodManager->good_list.end();
+		auto it = goodManager->good_list.begin();
+		while (it != goodManager->good_list.end()) {
+			auto &j = *it;
+			if (j.x == robot[robot_id].x && j.y == robot[robot_id].y) {
+				GET(robot_id);
+				robot[robot_id].assigned_berth = j.assigned_berth;
+				go_to_berth(robot_id, robot[robot_id].assigned_berth);
+				it = goodManager->good_list.erase(it);
+				return;
+			}
+			// 机器人到物品实际距离的估计值，是max(曼哈顿距离,bfs图中两点差的绝对值)
+			uint32_t curr_distance = max(
+					Util::manhattanDistance(it->x, it->y, robot[robot_id].x, robot[robot_id].y),
+					abs(mapManager->distance_data[j.assigned_berth]->data[it->x][it->y] -
+						mapManager->distance_data[j.assigned_berth]->data[robot[robot_id].x][robot[robot_id].y]));
+			if (curr_distance < min_distance) {
+				min_distance = curr_distance;
+				min_it = it;
+			}
+			it++;
+		}
+		if (min_distance > 25)
+			move_to_lowest_energy(robot_id);
+		else {
+			aStar(robot_id, *min_it);
+			//goodManager->good_list.erase(min_it);
+		}
+
+
 	}
 
 
@@ -487,11 +518,10 @@ private:
 			Node curr_node = visited[curr_x][curr_y];
 			if (curr_x == target_x && curr_y == target_y) {
 				// 找到目标位置，回溯路径
-				while (curr_node.next != -1) {
-					int next_direction = opposite_direction(curr_node.next);
-					path.push(next_direction);
-					curr_x += direction[next_direction][0];
-					curr_y += direction[next_direction][1];
+				while (curr_node.next != -1) { ;
+					path.push(opposite_direction(curr_node.next));
+					curr_x += direction[curr_node.next][0];
+					curr_y += direction[curr_node.next][1];
 					curr_node = visited[curr_x][curr_y];
 				}
 				break;
@@ -511,14 +541,15 @@ private:
 					new_y > 0 && new_y <= 200) {
 					visited[new_x][new_y].g = curr_node.g + 1;// 每次移动代价为1
 					visited[new_x][new_y].h = compute_h(new_x, new_y, good);
-					visited[new_x][new_y].next = i;
+					visited[new_x][new_y].next = opposite_direction(i);
 					visited[new_x][new_y].is_visited = 1;
 					boundary.emplace(new_x, new_y, visited[new_x][new_y].g + visited[new_x][new_y].h);
 				}
 			}
 		}
 		cerr << "astar:\t" << robot_id << "\t" << path.top() << endl;
-		MOVE(robot_id, path.top());
+		astarData[robot_id].is_enabled = true;
+		astarData[robot_id].path.swap(path);
 	}
 
 	static void go_to_berth(int robot_id, int berth_id) {
@@ -528,6 +559,7 @@ private:
 		int curr_y = robot[robot_id].y;
 		if (mapManager->distance_data[berth_id]->data[curr_x][curr_y] == 0) {
 			PULL(robot_id);
+			boat[berth[robot[robot_id].assigned_berth].assigned_boat].num++;
 			return;
 		}
 		for (int i = 0; i < 4; ++i) {
@@ -610,6 +642,7 @@ private:
 
 	Node visited[n + 2][n + 2];
 
+	AstarData astarData[robot_num];
 };
 
 RobotManager *robotManager;
