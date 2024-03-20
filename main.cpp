@@ -1,10 +1,20 @@
 #include <bits/stdc++.h>
 
+//#define DEBUG
+
+#ifdef DEBUG
+#define MOVE(id, dir) {printf("move %d %d\n",id,dir);debugManager.print("move %d %d\n",id,dir);}
+#define GET(id) {printf("get %d\n",id);debugManager.print("get %d\n",id);}
+#define PULL(id) {printf("pull %d\n",id);debugManager.print("pull %d\n",id);}
+#define SHIP(s_id, b_id){printf("ship %d %d\n",s_id,b_id);debugManager.print("ship %d %d\n",s_id,b_id);}
+#define GO(id) {printf("go %d\n",id);debugManager.print("go %d\n",id);}
+#else
 #define MOVE(id, dir) (printf("move %d %d\n",id,dir))
 #define GET(id) (printf("get %d\n",id))
 #define PULL(id) (printf("pull %d\n",id))
 #define SHIP(s_id, b_id)(printf("ship %d %d\n",s_id,b_id))
 #define GO(id) (printf("go %d\n",id))
+#endif
 
 
 using namespace std;
@@ -82,11 +92,52 @@ char ch[N][N];
 
 int curr_zhen;
 
+#ifdef DEBUG
+
+class DebugManager {
+private:
+	std::ofstream file;
+	string filename;
+public:
+	explicit DebugManager(const std::string &filename) {
+		this->filename = filename;
+	}
+
+	void print(const char *format, ...) {
+		file.open(filename, ios::app);
+		if (!file.is_open()) {
+			std::cerr << "Error opening file." << std::endl;
+		}
+		va_list args;
+		va_start(args, format);
+
+		char buffer[256]; // 假设最大输出长度为 256
+		vsnprintf(buffer, sizeof(buffer), format, args);
+
+		va_end(args);
+
+		file << buffer;
+		file.close();
+	}
+
+	~DebugManager() {
+		if (file.is_open()) {
+			file.close();
+		}
+	}
+};
+
+DebugManager debugManager("./out.txt");
+
+DebugManager debugManager1("./in.txt");
+#endif
+
 class Util {
 public:
 	static int manhattanDistance(int x1, int y1, int x2, int y2) {
 		return abs(x1 - x2) + abs(y1 - y2);
 	}
+
 };
 
 class RandomManager {
@@ -270,7 +321,7 @@ public:
 	static void handle_boat_event() {
 		for (auto &i: boat) {
 			if (i.status == 0)continue;
-			if (berth[i.assigned_berth].transport_time + curr_zhen > 14999) {
+			if (berth[i.assigned_berth].transport_time + curr_zhen > 14998) {
 				GO(i.id);
 				continue;
 			}
@@ -319,7 +370,7 @@ public:
 //		}
 //	};
 
-	double compute_energy(Good& good,int dx, int dy) const {
+	static double compute_energy(Good &good, int dx, int dy) {
 		int distance = abs(dx - good.x) + abs(dy - good.y);
 		if (distance > 100)return 0;
 		else return 1.0 * good.val / distance;
@@ -354,13 +405,15 @@ GoodManager *goodManager;
 
 class RobotManager {
 	struct Node {
-		int x, y; // 节点坐标
-		int g, h; // 实际代价和启发式代价
+		int x, y;
+		int g, h;
 		int next; // 方向,0→	1← 2↑ 3↓
-		Node *parent;//父节点
+		bool is_visited;
 
-		Node(int x, int y, int g, int h, int next, Node *parent) :
-				x(x), y(y), g(g), h(h), next(next), parent(parent) {}
+		Node() {
+			next = -1;
+			is_visited = false;
+		}
 	};
 
 public:
@@ -370,7 +423,8 @@ public:
 		if (robot[robot_id].goods == 1) {
 			go_to_berth(robot_id, robot[robot_id].assigned_berth);
 		} else {
-
+			uint32_t min_distance = UINT32_MAX;
+			auto min_it = goodManager->good_list.end();
 			auto it = goodManager->good_list.begin();
 			while (it != goodManager->good_list.end()) {
 				auto &j = *it;
@@ -381,53 +435,77 @@ public:
 					it = goodManager->good_list.erase(it);
 					return;
 				}
-
+				// 机器人到物品实际距离的估计值，是max(曼哈顿距离,bfs图中两点差的绝对值)
+				uint32_t curr_distance = max(
+						Util::manhattanDistance(it->x, it->y, robot[robot_id].x, robot[robot_id].y),
+						abs(mapManager->distance_data[j.assigned_berth]->data[it->x][it->y] -
+							mapManager->distance_data[j.assigned_berth]->data[robot[robot_id].x][robot[robot_id].y]));
+				if (curr_distance < min_distance) {
+					min_distance = curr_distance;
+					min_it = it;
+				}
 				it++;
 			}
-			move_to_lowest_energy(robot_id);
+			if (min_distance >= 15)
+				move_to_lowest_energy(robot_id);
+			else
+				aStar(robot_id, *min_it);
 		}
 	}
 
 
 private:
-	void aStar(int robot_id, int targetX, int targetY) {
-		bool visited[n + 2][n + 2];
+	static void aStar(int robot_id, Good &good) {
+		int target_x = good.x;
+		int target_y = good.y;
+		int curr_x = robot[robot_id].x;
+		int curr_y = robot[robot_id].y;
+		Node visited[n + 2][n + 2];
 		stack<int> path;
-		memset(visited, false, sizeof(visited));
 		priority_queue<Node *, vector<Node *>, decltype(&comp_node)> boundary;
-		boundary.push(
-				new Node(robot[robot_id].x, robot[robot_id].y, 0, Util::manhattanDistance(robot[robot_id].x, robot[robot_id].x, targetX, targetY), -1, nullptr));
+		visited[curr_x][curr_y].g = 0;
+		visited[curr_x][curr_y].h = compute_h(curr_x, curr_y, good);
+		visited[curr_x][curr_y].x = curr_x;
+		visited[curr_x][curr_y].y = curr_y;
+		boundary.push(&visited[robot[robot_id].x][robot[robot_id].y]);
 		while (!boundary.empty()) {
 			Node *curr_node = boundary.top();
 			boundary.pop();
-
-			if (curr_node->x == targetX && curr_node->y == targetY) {
+			curr_x = curr_node->x;
+			curr_y = curr_node->y;
+			if (curr_x == target_x && curr_y == target_y) {
 				// 找到目标位置，回溯路径
-				while (curr_node != nullptr) {
+				while (curr_node->next != -1) {
 					path.push(opposite_direction(curr_node->next));
-					curr_node = curr_node->parent;
+					curr_x += direction[curr_node->next][0];
+					curr_y += direction[curr_node->next][1];
+					curr_node = &visited[curr_x][curr_y];
 				}
 				break;
 			}
 
-			visited[curr_node->x][curr_node->y] = true;
+			visited[curr_x][curr_y].is_visited = true;
 
 			// 扩展相邻节点
 			for (int i = 0; i < 4; i++) {
-				int new_x = curr_node->x + direction[i][0];
-				int new_y = curr_node->y + direction[i][1];
+				int new_x = curr_x + direction[i][0];
+				int new_y = curr_y + direction[i][1];
 
-				if (!visited[new_x][new_y] && ch[new_x][new_y] != '#' && ch[new_x][new_y] && new_x > 0 &&
+				if (!visited[new_x][new_y].is_visited && ch[new_x][new_y] != '#' && ch[new_x][new_y] != '*' &&
+					ch[new_x][new_y] &&
+					new_x > 0 &&
 					new_x <= 200 &&
 					new_y > 0 && new_y <= 200) {
-					int new_g = curr_node->g + 1; // 每次移动代价为1
-					int new_h = Util::manhattanDistance(new_x, new_y, targetX, targetY);
-					Node *newNode = new Node(new_x, new_y, new_g, new_h, i, curr_node);
-					boundary.push(newNode);
+					visited[new_x][new_y].g = curr_node->g + 1;// 每次移动代价为1
+					visited[new_x][new_y].h = compute_h(new_x, new_y, good);
+					visited[new_x][new_y].x = new_x;
+					visited[new_x][new_y].y = new_y;
+					boundary.push(&visited[new_x][new_y]);
 				}
 			}
 		}
-		MOVE(robot_id,path.top());
+		cerr << "astar:\t" << robot_id << "\t" << path.top() << endl;
+		MOVE(robot_id, path.top());
 	}
 
 	static void go_to_berth(int robot_id, int berth_id) {
@@ -485,7 +563,7 @@ private:
 				continue;
 			double curr_energy = mapManager->energy_map->data[next_x][next_y];
 			for (auto &j: goodManager->good_list) {
-				curr_energy -= goodManager->compute_energy(j,next_x, next_y);
+				curr_energy -= goodManager->compute_energy(j, next_x, next_y);
 			}
 			for (int j = 0; j < robot_num; ++j) {
 				if (j == robot_id)continue;
@@ -503,6 +581,12 @@ private:
 			robot[robot_id].x += direction[next_move][0];
 			robot[robot_id].y += direction[next_move][1];
 		}
+	}
+
+	static int compute_h(int x, int y, Good &good) {
+		return Util::manhattanDistance(x, y, good.x, good.y) +
+			   abs(mapManager->distance_data[good.assigned_berth]->data[x][y] -
+				   mapManager->distance_data[good.assigned_berth]->data[good.x][good.y]);
 	}
 
 	static bool comp_node(Node *a, Node *b) {
@@ -566,6 +650,10 @@ int Input(int zhen) {
 	scanf("%d%d", &id, &money);
 	int num;
 	scanf("%d", &num);
+#ifdef DEBUG
+	debugManager1.print("%d %d\n", id, money);
+	debugManager1.print("%d\n", num);
+#endif
 	for (int i = 1; i <= num; i++) {
 		int x, y, val;
 		scanf("%d%d%d", &x, &y, &val);
@@ -574,18 +662,31 @@ int Input(int zhen) {
 		t.y = y + 1;
 		t.val = val;
 		goodManager->add_new_good_2(t);
+#ifdef DEBUG
+		debugManager1.print("%d %d %d\n", x, y, val);
+#endif
 	}
 	for (int i = 0; i < robot_num; i++) {
 		scanf("%d%d%d%d", &robot[i].goods, &robot[i].x, &robot[i].y, &robot[i].status);
+#ifdef DEBUG
+		debugManager1.print("%d %d %d %d\n", robot[i].goods, robot[i].x, robot[i].y, robot[i].status);
+#endif
 		robot[i].x += 1;
 		robot[i].y += 1;
+
 	}
 	for (int i = 0; i < boat_num; i++) {
 		scanf("%d%d\n", &boat[i].status, &boat[i].pos);
+#ifdef DEBUG
+		debugManager1.print("%d %d\n", boat[i].status, boat[i].pos);
+#endif
 	}
 	char okk[50];
 	scanf("%s", okk);
 	assert(okk[0] == 'O' && okk[1] == 'K');
+#ifdef DEBUG
+	debugManager1.print("OK\n");
+#endif
 	return id;
 }
 
@@ -597,17 +698,19 @@ int main() {
 			boatManager->handle_boat_event();
 		else {
 			boatManager->init_boat();
-			cerr << "robot data:" << endl;
-			for (int i = 0; i < robot_num; ++i) {
-				cerr << robot[i].x << "\t" << robot[i].y << "\t" << ch[robot[i].x][robot[i].y] << endl;
-			}
-
+//			cerr << "robot data:" << endl;
+//			for (int i = 0; i < robot_num; ++i) {
+//				cerr << robot[i].x << "\t" << robot[i].y << "\t" << ch[robot[i].x][robot[i].y] << endl;
+//			}
 		}
 
 		for (int i = 0; i < robot_num; i++) {
 			robotManager->handle_robot_event(i);
 		}
 		puts("OK");
+#ifdef DEBUG
+		debugManager.print("OK\n");
+#endif
 		fflush(stdout);
 	}
 	return 0;
