@@ -30,6 +30,7 @@ struct Robot {
 	int x, y, goods;
 	int status;
 	int assigned_berth;
+	int curr_direction;
 
 	Robot() { assigned_berth = -1; }
 
@@ -37,6 +38,7 @@ struct Robot {
 		x = startX;
 		y = startY;
 		assigned_berth = -1;
+		curr_direction = -1;
 	}
 } robot[robot_num + 10];
 
@@ -219,7 +221,7 @@ public:
 		}
 #ifdef MANUAL_OPERATE_1
 		// 在这里写下需要手动分配的港口号
-		int manual_berth_id[5]={1,3,5,6,7};
+		int manual_berth_id[5] = {1, 3, 5, 6, 7};//13567
 		for (int i = 0; i < 5; ++i) {
 			available_berth[i] = &berth[manual_berth_id[i]];
 		}
@@ -534,6 +536,7 @@ public:
 
 	void handle_robot_event(int robot_id) {
 		if (robot[robot_id].status == 0) {
+			astarData[robot_id].is_enabled = false;
 			return;
 		}
 		if (robot[robot_id].goods == 1) {
@@ -545,10 +548,16 @@ public:
 				astarData[robot_id].is_enabled = false;
 			} else {
 				int next_move = astarData[robot_id].path.top();
+				int next_x = robot[robot_id].x + direction[next_move][0];
+				int next_y = robot[robot_id].y + direction[next_move][1];
+				for (int i = 0; i < robot_id; ++i) {
+					if (robot[i].x == next_x && robot[i].y == next_y)return;
+				}
 				astarData[robot_id].path.pop();
 				MOVE(robot_id, next_move);
-				robot[robot_id].x += direction[next_move][0];
-				robot[robot_id].y += direction[next_move][1];
+				robot[robot_id].x = next_x;
+				robot[robot_id].y = next_y;
+				robot[robot_id].curr_direction = next_move;
 				return;
 			}
 		}
@@ -578,12 +587,12 @@ public:
 			}
 			it++;
 		}
-		if (max_weight < 5)
+//		if (max_weight < 5)
+		if (max_it == goodManager->good_list.end())
 			move_to_lowest_energy(robot_id);
 		else {
 			max_it->assigned_robot = robot_id;
 			aStar(robot_id, *max_it);
-			//goodManager->good_list.erase(min_it);
 		}
 	}
 
@@ -643,8 +652,8 @@ private:
 		astarData[robot_id].path.swap(path);
 	}
 
-	static void go_to_berth(int robot_id, int berth_id) {
-		int min = INT_MAX;
+	void go_to_berth(int robot_id, int berth_id) {
+		double min = 5000;
 		int next_move = -1;
 		int curr_x = robot[robot_id].x;
 		int curr_y = robot[robot_id].y;
@@ -656,16 +665,24 @@ private:
 		for (int i = 0; i < 4; ++i) {
 			int next_x = curr_x + direction[i][0];
 			int next_y = curr_y + direction[i][1];
-			int val = mapManager->distance_data[berth_id]->data[next_x][next_y];
+			double val = mapManager->distance_data[berth_id]->data[next_x][next_y];
 			for (int j = 0; j < robot_num; ++j) {
 				if (j == robot_id)continue;
 				int distance = Util::manhattanDistance(next_x, next_y, robot[j].x, robot[j].y);
 				if (distance == 0) {
-					val = INT_MAX;
+					val = 5001;
 					break;
-				} else if (distance < 3) {
-					val += 4;
 				}
+				//给大忙人让路
+				if (astarData[j].is_enabled && distance < 3) {
+					val += 3;
+					break;
+				}
+				if (distance < 3) {
+					val += 0.75;
+				} else if ((robot[j].x + direction[robot[j].curr_direction][0]) == next_x &&
+						   (robot[j].y + direction[robot[j].curr_direction][1]) == next_y)
+					val += 1.35;
 			}
 			if (val < min) {
 				min = val;
@@ -676,6 +693,7 @@ private:
 		MOVE(robot_id, next_move);
 		robot[robot_id].x += direction[next_move][0];
 		robot[robot_id].y += direction[next_move][1];
+		robot[robot_id].curr_direction = next_move;
 	}
 
 	static void move_to_lowest_energy(int robot_id) {
@@ -716,6 +734,7 @@ private:
 			MOVE(robot_id, next_move);
 			robot[robot_id].x += direction[next_move][0];
 			robot[robot_id].y += direction[next_move][1];
+			robot[robot_id].curr_direction = next_move;
 		}
 	}
 
