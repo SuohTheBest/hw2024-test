@@ -1,6 +1,7 @@
 #include <bits/stdc++.h>
 
 //#define DEBUG
+#define MANUAL_OPERATE_1
 
 #ifdef DEBUG
 #define MOVE(id, dir) {printf("move %d %d\n",id,dir);debugManager.print("move %d %d\n",id,dir);}
@@ -78,11 +79,12 @@ struct Good {
 	double weight;
 	int time_start;
 	int assigned_berth;//货物被分配到哪个港口
+	int assigned_robot;
 
 	Good() = default;
 
 	explicit Good(int time) :
-			time_start(time), val(0), x(0), y(0), weight(0) {};
+			time_start(time), val(0), x(0), y(0), weight(0), assigned_robot(-1) {};
 
 };
 
@@ -177,6 +179,17 @@ class MapManager {
 		}
 	};
 
+	struct RobotStarting {
+		int x;
+		int y;
+		int assigned_berth;
+
+		RobotStarting() = default;
+
+		RobotStarting(int x, int y) :
+				x(x), y(y), assigned_berth(-1) {};
+	};
+
 public:
 	MapManager() {
 		vector<std::pair<uint32_t, int>> berth_distance_total;
@@ -186,8 +199,8 @@ public:
 			DistanceMap *temp = new DistanceMap();
 			for (int i = 0; i < 4; ++i) {
 				for (int j = 0; j < 4; ++j) {
-					int curr_x = 1 + t.x + i;
-					int curr_y = 1 + t.y + j;
+					int curr_x = t.x + i;
+					int curr_y = t.y + j;
 					temp->data[curr_x][curr_y] = 0;
 					bfs_minimal_distance(curr_x, curr_y, temp);
 				}
@@ -204,30 +217,46 @@ public:
 			}
 			berth_distance_total.emplace_back(total, t.id);
 		}
-		std::sort(berth_distance_total.begin(), berth_distance_total.end());
+#ifdef MANUAL_OPERATE_1
+		// 在这里写下需要手动分配的港口号
+		int manual_berth_id[5]={1,3,5,6,7};
+		for (int i = 0; i < 5; ++i) {
+			available_berth[i] = &berth[manual_berth_id[i]];
+		}
+#else
 
+		std::sort(berth_distance_total.begin(), berth_distance_total.end());
 		// 其实是找距离最远的港口，我现在觉得应该平均分配港口，避免港口堆在一起，但是代码写的一坨
 		available_berth[0] = &berth[berth_distance_total[0].second];
 		vector<int> selected;
 		selected.push_back(berth_distance_total[0].second);
-		for (int i = 1; i < 5; ++i) {
-			uint32_t max = 0;
-			int next_berth = -1;
-			for (auto j: berth_distance_total) {
-				if (find(selected.begin(), selected.end(), j.second) != selected.end())continue;
-				uint32_t curr_val = 0;
-				for (auto k: selected) {
-					curr_val += distance_data[j.second]->data[berth[k].x + 2][berth[k].y + 2];
-				}
-				if (curr_val > max) {
-					max = curr_val;
-					next_berth = j.second;
+		berth_distance_total.erase(berth_distance_total.begin());
+		for (auto j = berth_distance_total.begin(); j != berth_distance_total.end(); j++) {
+			if (selected.size() >= 5)break;
+			uint16_t curr_val = UINT16_MAX;
+			bool is_too_near = false;
+			for (auto k: selected) {
+				curr_val = min(curr_val, distance_data[k]->data[berth[j->second].x][berth[j->second].y]);
+				if (curr_val <= 40) {
+					is_too_near = true;
+					break;
 				}
 			}
-			available_berth[i] = &berth[next_berth];
-			selected.push_back(next_berth);
+			if (is_too_near)continue;
+			selected.push_back(j->second);
+		}
+		if (selected.size() < 5) {
+			for (auto j: berth_distance_total) {
+				if (std::find(selected.begin(), selected.end(), j.second) != selected.end())continue;
+				selected.push_back(j.second);
+				if (selected.size() >= 5)break;
+			}
 		}
 
+		for (int i = 0; i < selected.size(); ++i) {
+			available_berth[i] = &berth[selected[i]];
+		}
+#endif
 		energy_map = new EnergyMap();
 		for (int i = 1; i <= n; ++i) {
 			for (int j = 1; j <= n; ++j) {
@@ -235,6 +264,37 @@ public:
 					energy_map->data[i][j] = 5000.0;
 			}
 		}
+
+		for (int i = 1; i <= n; ++i) {
+			for (int j = 1; j <= n; ++j) {
+				if (ch[i][j] == 'A')
+					robot_starting.emplace_back(i, j);
+			}
+		}
+
+		uint8_t assigned_bots[berth_num];
+		memset(assigned_bots, 0, sizeof(assigned_bots));
+		for (auto &i: robot_starting) {
+			vector<pair<int, int>> val_list;
+			for (auto j: available_berth) {
+				uint16_t val = distance_data[j->id]->data[i.x][i.y];
+				if (val == UINT16_MAX)continue;
+				val_list.emplace_back(val, j->id);
+			}
+			std::sort(val_list.begin(), val_list.end());
+			for (auto j: val_list) {
+				if (assigned_bots[j.second] < 2) {
+					i.assigned_berth = j.second;
+					assigned_bots[j.second]++;
+					break;
+				}
+			}
+			// list里所有的都>=2
+			if (i.assigned_berth == -1) {
+				if (!val_list.empty())i.assigned_berth = val_list[0].second;
+			}
+		}
+
 	}
 
 	bool is_in_available_berth(int boat_pos) {
@@ -260,7 +320,7 @@ public:
 	Berth *available_berth[boat_num];
 	DistanceMap *distance_data[berth_num + 10];
 	EnergyMap *energy_map;
-
+	vector<RobotStarting> robot_starting;
 private:
 
 	static void bfs_minimal_distance(uint8_t start_x, uint8_t start_y, DistanceMap *distanceMap) {
@@ -300,7 +360,6 @@ private:
 		}
 		os.close();
 	}
-
 
 };
 
@@ -351,7 +410,7 @@ BoatManager *boatManager;
 class GoodManager {
 public:
 
-	void add_new_good(Good &good) {
+	[[deprecated]] void add_new_good(Good &good) {
 		compute_good_weight(good);
 		if (!good_list.empty() && good_list.end()->weight >= good.weight)return;
 		else {
@@ -361,9 +420,9 @@ public:
 
 	//存储所有的物品，删除过期的物品
 	void add_new_good_2(Good &good) {
-		compute_good_weight(good);
-		good_list.push_back(good);
-		delete_expire_good();
+		if (compute_good_weight(good)) {
+			good_list.push_back(good);
+		}
 	}
 
 	//删除队列开头的过期物品
@@ -382,10 +441,17 @@ public:
 //		}
 //	};
 
-	static double compute_energy(Good &good, int dx, int dy) {
-		int distance = abs(dx - good.x) + abs(dy - good.y);
+	static double compute_energy(Good &good, int robot_id, int dx, int dy) {
+		if (robot[robot_id].assigned_berth != good.assigned_berth)return 0;
+		int distance = Util::manhattanDistance(dx, dy, good.x, good.y);
 		if (distance > 100)return 0;
 		else return 1.0 * good.val / distance;
+	}
+
+	static double compute_energy(Good &good, int robot_id) {
+		if (robot[robot_id].assigned_berth != good.assigned_berth)return 0;
+		int distance = Util::manhattanDistance(good.x, good.y, robot[robot_id].x, robot[robot_id].y);
+		return 1.0 * good.val / distance;
 	}
 
 	list<Good> good_list;
@@ -396,7 +462,7 @@ private:
 		return wa > wb;
 	}
 
-	static void compute_good_weight(Good &good) {//计算权重
+	static bool compute_good_weight(Good &good) {//计算权重
 		double t;
 		uint16_t min = UINT16_MAX;
 		int berth_id = -1;
@@ -407,9 +473,11 @@ private:
 				berth_id = i->id;
 			}
 		}
+		if (min == UINT16_MAX)return false;
 		t = good.val / (1.0 + min);
 		good.weight = t;
 		good.assigned_berth = berth_id;
+		return true;
 	}
 };
 
@@ -450,6 +518,20 @@ class RobotManager {
 
 public:
 
+	// 为每个机器人分配对应的港口
+	static void init_robot() {
+		cerr << "robot init:\n";
+		for (int i = 0; i < robot_num; ++i) {
+			for (auto j: mapManager->robot_starting) {
+				if (j.x == robot[i].x && j.y == robot[i].y) {
+					robot[i].assigned_berth = j.assigned_berth;
+					break;
+				}
+			}
+			cerr << i << "\t" << robot[i].assigned_berth << endl;
+		}
+	}
+
 	void handle_robot_event(int robot_id) {
 		if (robot[robot_id].status == 0) {
 			return;
@@ -471,38 +553,38 @@ public:
 			}
 		}
 
-		uint32_t min_distance = UINT32_MAX;
-		auto min_it = goodManager->good_list.end();
+		double max_weight = -100;
+		auto max_it = goodManager->good_list.end();//改为计算最大权重
 		auto it = goodManager->good_list.begin();
 		while (it != goodManager->good_list.end()) {
 			auto &j = *it;
+			if (j.assigned_berth != robot[robot_id].assigned_berth ||
+				(j.assigned_robot != -1 && j.assigned_robot != robot_id)) {
+				it++;
+				continue;
+			}
 			if (j.x == robot[robot_id].x && j.y == robot[robot_id].y) {
 				GET(robot_id);
 				astarData[robot_id].is_enabled = false;
-				robot[robot_id].assigned_berth = j.assigned_berth;
 				go_to_berth(robot_id, robot[robot_id].assigned_berth);
-				it = goodManager->good_list.erase(it);
+				goodManager->good_list.erase(it);
 				return;
 			}
-			// 机器人到物品实际距离的估计值，是max(曼哈顿距离,bfs图中两点差的绝对值)
-			uint32_t curr_distance = max(
-					Util::manhattanDistance(it->x, it->y, robot[robot_id].x, robot[robot_id].y),
-					abs(mapManager->distance_data[j.assigned_berth]->data[it->x][it->y] -
-						mapManager->distance_data[j.assigned_berth]->data[robot[robot_id].x][robot[robot_id].y]));
-			if (curr_distance < min_distance) {
-				min_distance = curr_distance;
-				min_it = it;
+			// 机器人到物品实际距离的估计值，是曼哈顿距离
+			double curr_weight = goodManager->compute_energy(*it, robot_id);
+			if (curr_weight > max_weight) {
+				max_weight = curr_weight;
+				max_it = it;
 			}
 			it++;
 		}
-		if (min_distance > 25)
+		if (max_weight < 5)
 			move_to_lowest_energy(robot_id);
 		else {
-			aStar(robot_id, *min_it);
+			max_it->assigned_robot = robot_id;
+			aStar(robot_id, *max_it);
 			//goodManager->good_list.erase(min_it);
 		}
-
-
 	}
 
 
@@ -617,7 +699,7 @@ private:
 				continue;
 			double curr_energy = mapManager->energy_map->data[next_x][next_y];
 			for (auto &j: goodManager->good_list) {
-				curr_energy -= goodManager->compute_energy(j, next_x, next_y);
+				curr_energy -= goodManager->compute_energy(j, robot_id, next_x, next_y);
 			}
 			for (int j = 0; j < robot_num; ++j) {
 				if (j == robot_id)continue;
@@ -669,7 +751,8 @@ void Init() {
 		berth[berth_id].id = berth_id;
 		scanf("%d%d%d%d", &berth[berth_id].x, &berth[berth_id].y, &berth[berth_id].transport_time,
 			  &berth[berth_id].loading_speed);// 这里的x和y都是泊位的左上角
-
+		berth[berth_id].x += 1;
+		berth[berth_id].y += 1;
 		cerr << berth[berth_id].id << " " << berth[berth_id].x << " " << berth[berth_id].y << " "
 			 << berth[berth_id].transport_time << " "
 			 << berth[berth_id].loading_speed << endl;
@@ -716,6 +799,7 @@ int Input(int zhen) {
 		debugManager1.print("%d %d %d\n", x, y, val);
 #endif
 	}
+	goodManager->delete_expire_good();
 	for (int i = 0; i < robot_num; i++) {
 		scanf("%d%d%d%d", &robot[i].goods, &robot[i].x, &robot[i].y, &robot[i].status);
 #ifdef DEBUG
@@ -744,10 +828,11 @@ int main() {
 	Init();
 	for (curr_zhen = 1; curr_zhen <= 15000; curr_zhen++) {
 		int id = Input(curr_zhen);
-		if (curr_zhen != 1)
+		if (curr_zhen != 1) {
 			boatManager->handle_boat_event();
-		else {
+		} else {
 			boatManager->init_boat();
+			robotManager->init_robot();
 //			cerr << "robot data:" << endl;
 //			for (int i = 0; i < robot_num; ++i) {
 //				cerr << robot[i].x << "\t" << robot[i].y << "\t" << ch[robot[i].x][robot[i].y] << endl;
